@@ -1,0 +1,63 @@
+# Storage (runtime data, patient files)
+storage/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg-info
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Environment
+.env
+backend/.env
+backend/.admin_credentials
+
+# Database
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Test / Coverage
+.pytest_cache/
+.ruff_cache/
+.benchmarks/
+.coverage
+htmlcov/
+
+# Generated
+backend/static/
+
+# Patient data — NEVER commit real patient files
+# But DO commit templates and knowledge bases needed for deployment
+config/patient_info.yaml
+tmp_config_chen_*/
+backups/
+*.docx
+*.pdf
+!templates/**/*.docx
+!data/knowledge_bases/processed/*.xlsx
+
+# macOS metadata
+._*
+output/
+*.tgz
+*.tar.gz
