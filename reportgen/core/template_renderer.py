@@ -150,6 +150,7 @@ class TemplateRenderer:
             try:
                 self._fit_tables_to_page_width(output_path)
                 self._optimize_variant_table_layout(output_path)
+                self._normalize_targeted_drug_tips_table(output_path)
             except Exception as e:
                 self.logger.warning("表格宽度压缩失败", error=str(e))
 
@@ -184,6 +185,7 @@ class TemplateRenderer:
                 self._normalize_final_section_layout(output_path)
                 self._compact_gene_list_tables(output_path)
                 self._optimize_variant_table_layout(output_path)
+                self._normalize_targeted_drug_tips_table(output_path)
                 self._cleanup_trailing_blank_page(output_path)
                 # 最终布局清理可能改变分页；再刷新一次，避免目录页码停留在旧分页。
                 try:
@@ -441,6 +443,171 @@ class TemplateRenderer:
 
         if changed:
             doc.save(file_path)
+
+    def _normalize_targeted_drug_tips_table(self, file_path: str) -> None:
+        """Normalize the reviewed targeted-drug tips table style."""
+        from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+        from docx.shared import Pt, RGBColor
+
+        doc = Document(file_path)
+        changed = False
+        widths = [1170, 1758, 3530, 1837]
+
+        def compact_text(value: str) -> str:
+            return "".join(str(value or "").split())
+
+        def is_target_table(table) -> bool:
+            if not table.rows or len(table.rows[0].cells) < 4:
+                return False
+            header = compact_text(" ".join(cell.text for cell in table.rows[0].cells[:4]))
+            return all(
+                token in header
+                for token in ("基因", "突变位点", "潜在获益", "可能耐药")
+            )
+
+        def ensure(parent, tag: str):
+            child = parent.find(qn(tag))
+            if child is None:
+                child = OxmlElement(tag)
+                parent.append(child)
+            return child
+
+        def set_table_border(table, color: str = "000000", size: str = "4") -> None:
+            tbl_pr = table._tbl.tblPr
+            borders = ensure(tbl_pr, "w:tblBorders")
+            for side in ("top", "left", "bottom", "right", "insideH", "insideV"):
+                border = borders.find(qn(f"w:{side}"))
+                if border is None:
+                    border = OxmlElement(f"w:{side}")
+                    borders.append(border)
+                border.set(qn("w:val"), "single")
+                border.set(qn("w:sz"), size)
+                border.set(qn("w:space"), "0")
+                border.set(qn("w:color"), color)
+
+        def set_cell_border(cell, color: str = "000000", size: str = "4") -> None:
+            tc_pr = cell._tc.get_or_add_tcPr()
+            borders = ensure(tc_pr, "w:tcBorders")
+            for side in ("top", "left", "bottom", "right"):
+                border = borders.find(qn(f"w:{side}"))
+                if border is None:
+                    border = OxmlElement(f"w:{side}")
+                    borders.append(border)
+                border.set(qn("w:val"), "single")
+                border.set(qn("w:sz"), size)
+                border.set(qn("w:space"), "0")
+                border.set(qn("w:color"), color)
+
+        def set_table_layout(table) -> None:
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            tbl_pr = table._tbl.tblPr
+
+            tbl_w = ensure(tbl_pr, "w:tblW")
+            tbl_w.set(qn("w:type"), "dxa")
+            tbl_w.set(qn("w:w"), str(sum(widths)))
+
+            layout = ensure(tbl_pr, "w:tblLayout")
+            layout.set(qn("w:type"), "fixed")
+
+            cell_mar = ensure(tbl_pr, "w:tblCellMar")
+            for side in ("top", "left", "bottom", "right"):
+                margin = cell_mar.find(qn(f"w:{side}"))
+                if margin is None:
+                    margin = OxmlElement(f"w:{side}")
+                    cell_mar.append(margin)
+                margin.set(qn("w:w"), "70")
+                margin.set(qn("w:type"), "dxa")
+
+            grid = table._tbl.tblGrid
+            if grid is None:
+                grid = OxmlElement("w:tblGrid")
+                table._tbl.insert(0, grid)
+            for child in list(grid):
+                grid.remove(child)
+            for width in widths:
+                col = OxmlElement("w:gridCol")
+                col.set(qn("w:w"), str(width))
+                grid.append(col)
+
+            set_table_border(table)
+
+        def set_row_height(row, height: int) -> None:
+            tr_pr = row._tr.get_or_add_trPr()
+            tr_height = tr_pr.find(qn("w:trHeight"))
+            if tr_height is None:
+                tr_height = OxmlElement("w:trHeight")
+                tr_pr.append(tr_height)
+            tr_height.set(qn("w:val"), str(height))
+            tr_height.set(qn("w:hRule"), "atLeast")
+
+        def set_cell_width(cell, width: int) -> None:
+            tc_pr = cell._tc.get_or_add_tcPr()
+            tc_w = tc_pr.find(qn("w:tcW"))
+            if tc_w is None:
+                tc_w = OxmlElement("w:tcW")
+                tc_pr.append(tc_w)
+            tc_w.set(qn("w:type"), "dxa")
+            tc_w.set(qn("w:w"), str(width))
+
+        def set_cell_shading(cell, fill: str) -> None:
+            tc_pr = cell._tc.get_or_add_tcPr()
+            shd = tc_pr.find(qn("w:shd"))
+            if shd is None:
+                shd = OxmlElement("w:shd")
+                tc_pr.append(shd)
+            shd.set(qn("w:val"), "clear")
+            shd.set(qn("w:color"), "auto")
+            shd.set(qn("w:fill"), fill)
+
+        def apply_font(run, *, header: bool, link: bool) -> None:
+            run.font.name = "微软雅黑"
+            run._element.get_or_add_rPr().get_or_add_rFonts().set(
+                qn("w:eastAsia"), "微软雅黑"
+            )
+            run.font.size = Pt(9)
+            run.font.bold = bool(header)
+            run.font.underline = bool(link)
+            if header:
+                run.font.color.rgb = RGBColor(255, 255, 255)
+            elif link:
+                run.font.color.rgb = RGBColor(0, 0, 255)
+            else:
+                run.font.color.rgb = RGBColor(0, 0, 0)
+
+        def style_cell(cell, *, header: bool, link: bool, width: int) -> None:
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            set_cell_width(cell, width)
+            set_cell_border(cell)
+            set_cell_shading(cell, "00C4D8" if header else "FFFFFF")
+            for paragraph in cell.paragraphs:
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                paragraph.paragraph_format.space_before = Pt(0)
+                paragraph.paragraph_format.space_after = Pt(0)
+                paragraph.paragraph_format.line_spacing = 1.0
+                for run in paragraph.runs:
+                    apply_font(run, header=header, link=link)
+
+        for table in doc.tables:
+            if not is_target_table(table):
+                continue
+            set_table_layout(table)
+            for row_idx, row in enumerate(table.rows):
+                set_row_height(row, 567 if row_idx == 0 else 692)
+                for col_idx, cell in enumerate(row.cells[:4]):
+                    style_cell(
+                        cell,
+                        header=row_idx == 0,
+                        link=row_idx > 0 and col_idx in (0, 2, 3),
+                        width=widths[col_idx],
+                    )
+            changed = True
+
+        if changed:
+            doc.save(file_path)
+            self.logger.debug("已规范靶向药物用药提示表样式")
 
     def validate_template_contract(self, template_path: str, context: dict) -> dict:
         """Validate that the template's referenced variables exist in the context.

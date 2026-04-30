@@ -8,6 +8,8 @@ import pytest
 import yaml
 from docx import Document
 from docx.enum.section import WD_SECTION
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 from docx.shared import Cm
 
 
@@ -393,6 +395,55 @@ def test_patient_info_table_uses_lz_project_code_and_removes_qc_rows(tmp_path):
     assert "MLS2601287001" not in all_text
     for removed in ("送检医院", "送检科室", "病理号", "采集日期"):
         assert removed not in all_text
+
+
+def test_targeted_drug_tips_table_style_is_normalized(tmp_path):
+    docx_path = tmp_path / "targeted_drug_tips.docx"
+    doc = Document()
+    table = doc.add_table(rows=2, cols=4)
+    headers = [
+        "基因",
+        "突变位点",
+        "潜在获益靶向药物\n（证据等级）",
+        "可能耐药或慎重药物\n（证据等级）",
+    ]
+    values = [
+        "KRAS",
+        "c.38G>A,\np.G13D",
+        "西妥昔单抗（A）",
+        "依维莫司（C）",
+    ]
+    for idx, value in enumerate(headers):
+        table.rows[0].cells[idx].text = value
+    for idx, value in enumerate(values):
+        table.rows[1].cells[idx].text = value
+    doc.save(docx_path)
+
+    TemplateRenderer(log_level="ERROR")._normalize_targeted_drug_tips_table(str(docx_path))
+
+    table = Document(docx_path).tables[0]
+    grid_widths = [col.get(qn("w:w")) for col in table._tbl.tblGrid.gridCol_lst]
+    assert grid_widths == ["1170", "1758", "3530", "1837"]
+
+    header_cell = table.rows[0].cells[0]
+    body_gene_cell = table.rows[1].cells[0]
+    body_site_cell = table.rows[1].cells[1]
+    header_shd = header_cell._tc.tcPr.find(qn("w:shd"))
+    body_shd = body_gene_cell._tc.tcPr.find(qn("w:shd"))
+    assert header_shd.get(qn("w:fill")) == "00C4D8"
+    assert body_shd.get(qn("w:fill")) == "FFFFFF"
+
+    header_run = header_cell.paragraphs[0].runs[0]
+    gene_run = body_gene_cell.paragraphs[0].runs[0]
+    site_run = body_site_cell.paragraphs[0].runs[0]
+    assert header_run.font.bold is True
+    assert header_run.font.size.pt == 9
+    assert str(header_run.font.color.rgb) == "FFFFFF"
+    assert gene_run.font.size.pt == 9
+    assert str(gene_run.font.color.rgb) == "0000FF"
+    assert gene_run.font.underline is True
+    assert site_run.font.underline is False
+    assert body_site_cell.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
 
 
 def test_signature_placeholder_is_removed_without_image(tmp_path):
