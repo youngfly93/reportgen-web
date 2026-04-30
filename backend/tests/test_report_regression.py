@@ -365,6 +365,36 @@ def test_consultation_phone_is_enabled_in_config():
     assert (settings.get("report_content") or {}).get("consultation_phone") == "022-87190699"
 
 
+def test_patient_info_table_uses_lz_project_code_and_removes_qc_rows(tmp_path):
+    docx_path = tmp_path / "patient_info_table.docx"
+    doc = Document()
+    table = doc.add_table(rows=5, cols=4)
+    rows = [
+        ("姓名：", "陈三", "样本类型：", "组织"),
+        ("性别：", "男", "取材手段：", "-"),
+        ("临床诊断：", "结直肠癌", "项目编码：", "MLS2601287001"),
+        ("送检医院：", "某某医院", "送检科室：", "肿瘤科"),
+        ("病理号：", "-", "采集日期：", "2026-03-05"),
+    ]
+    for row, values in zip(table.rows, rows):
+        for cell, value in zip(row.cells, values):
+            cell.text = value
+    doc.save(docx_path)
+
+    TemplateRenderer(log_level="ERROR")._apply_report_content_fixes(
+        str(docx_path),
+        {"report_number": "MLJY-LZ260525", "sample_id": "MLS2601287001"},
+    )
+
+    table = Document(docx_path).tables[0]
+    row_texts = [" ".join(cell.text for cell in row.cells) for row in table.rows]
+    all_text = "\n".join(row_texts)
+    assert "项目编码： LZ260525" in all_text
+    assert "MLS2601287001" not in all_text
+    for removed in ("送检医院", "送检科室", "病理号", "采集日期"):
+        assert removed not in all_text
+
+
 def test_signature_placeholder_is_removed_without_image(tmp_path):
     docx_path = tmp_path / "signature.docx"
     doc = Document()

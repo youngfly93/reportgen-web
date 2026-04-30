@@ -288,6 +288,34 @@ class TemplateRenderer:
         def dotted_date(text: str) -> str:
             return re.sub(r"\b(\d{4})-(\d{2})-(\d{2})\b", r"\1.\2.\3", text)
 
+        def set_paragraph_text(paragraph, value: str) -> bool:
+            old = paragraph.text
+            if paragraph.runs:
+                paragraph.runs[0].text = value
+                for run in paragraph.runs[1:]:
+                    run.text = ""
+            else:
+                paragraph.add_run(value)
+            return paragraph.text != old
+
+        def set_cell_text(cell, value: str) -> bool:
+            old = cell.text
+            if cell.paragraphs:
+                set_paragraph_text(cell.paragraphs[0], value)
+                for paragraph in cell.paragraphs[1:]:
+                    set_paragraph_text(paragraph, "")
+            else:
+                cell.add_paragraph(value)
+            return cell.text != old
+
+        def extract_project_code(*values) -> str:
+            for value in values:
+                text = str(value or "")
+                match = re.search(r"\bLZ[-_\s]*(\d{6,})\b", text, flags=re.IGNORECASE)
+                if match:
+                    return f"LZ{match.group(1)}"
+            return ""
+
         # Cover dates use compact yyyymmdd; signature/report footer uses yyyy.mm.dd.
         for paragraph in doc.paragraphs:
             text = paragraph.text or ""
@@ -302,24 +330,33 @@ class TemplateRenderer:
                 changed = replace_in_runs(paragraph, dotted_date) or changed
 
         # The first information table displays project code, not the source MLS file id.
-        report_number = str(context.get("report_number") or "").strip()
-        project_code = ""
-        match = re.search(r"(LZ\d+)", report_number, flags=re.IGNORECASE)
-        if match:
-            project_code = match.group(1).upper()
-        sample_id = str(context.get("sample_id") or "").strip()
+        project_code = extract_project_code(
+            context.get("project_code"),
+            context.get("report_number"),
+            context.get("report_id"),
+            *(v for v in context.values() if isinstance(v, (str, int, float))),
+        )
         if project_code:
             for table in doc.tables:
                 for row in table.rows:
-                    row_text = " ".join(cell.text for cell in row.cells)
-                    if "项目编码" not in row_text:
+                    cells = list(row.cells)
+                    for idx, cell in enumerate(cells):
+                        if "项目编码" not in cell.text:
+                            continue
+                        if idx + 1 < len(cells):
+                            changed = set_cell_text(cells[idx + 1], project_code) or changed
+                        else:
+                            changed = replace_in_runs(
+                                cell.paragraphs[0],
+                                lambda s: re.sub(
+                                    r"(项目编码[:：]\s*).*",
+                                    lambda m: f"{m.group(1)}{project_code}",
+                                    s,
+                                ),
+                            ) or changed
+                        break
+                    else:
                         continue
-                    for cell in row.cells:
-                        if sample_id and sample_id in cell.text:
-                            for p in cell.paragraphs:
-                                changed = replace_in_runs(
-                                    p, lambda s: s.replace(sample_id, project_code)
-                                ) or changed
                     break
 
         # 301/358 report body should reflect the selected project gene count.
@@ -341,7 +378,18 @@ class TemplateRenderer:
 
         # Patient info table should stop at project code; hospital/pathology/QC rows
         # were requested to be removed from this location.
-        remove_markers = ("送检医院", "病理号", "平均深度", "Q30", "覆盖度")
+        remove_markers = (
+            "送检医院",
+            "送检科室",
+            "病理号",
+            "采集日期",
+            "采样日期",
+            "取材手段",
+            "取材部位",
+            "平均深度",
+            "Q30",
+            "覆盖度",
+        )
         for table in doc.tables:
             if not any("项目编码" in cell.text for row in table.rows for cell in row.cells):
                 continue
