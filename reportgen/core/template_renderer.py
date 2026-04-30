@@ -150,7 +150,7 @@ class TemplateRenderer:
             try:
                 self._fit_tables_to_page_width(output_path)
                 self._optimize_variant_table_layout(output_path)
-                self._normalize_targeted_drug_tips_table(output_path)
+                self._normalize_reviewed_result_tables(output_path)
             except Exception as e:
                 self.logger.warning("表格宽度压缩失败", error=str(e))
 
@@ -185,7 +185,7 @@ class TemplateRenderer:
                 self._normalize_final_section_layout(output_path)
                 self._compact_gene_list_tables(output_path)
                 self._optimize_variant_table_layout(output_path)
-                self._normalize_targeted_drug_tips_table(output_path)
+                self._normalize_reviewed_result_tables(output_path)
                 self._cleanup_trailing_blank_page(output_path)
                 # 最终布局清理可能改变分页；再刷新一次，避免目录页码停留在旧分页。
                 try:
@@ -445,7 +445,11 @@ class TemplateRenderer:
             doc.save(file_path)
 
     def _normalize_targeted_drug_tips_table(self, file_path: str) -> None:
-        """Normalize the reviewed targeted-drug tips table style."""
+        """Backward-compatible wrapper for the reviewed result table styling."""
+        self._normalize_reviewed_result_tables(file_path)
+
+    def _normalize_reviewed_result_tables(self, file_path: str) -> None:
+        """Normalize reviewed result tables without touching other table families."""
         from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
         from docx.enum.text import WD_ALIGN_PARAGRAPH
         from docx.oxml import OxmlElement
@@ -454,19 +458,115 @@ class TemplateRenderer:
 
         doc = Document(file_path)
         changed = False
-        widths = [1170, 1758, 3530, 1837]
 
         def compact_text(value: str) -> str:
             return "".join(str(value or "").split())
 
-        def is_target_table(table) -> bool:
-            if not table.rows or len(table.rows[0].cells) < 4:
-                return False
-            header = compact_text(" ".join(cell.text for cell in table.rows[0].cells[:4]))
-            return all(
-                token in header
-                for token in ("基因", "突变位点", "潜在获益", "可能耐药")
-            )
+        def table_header(table) -> str:
+            if not table.rows:
+                return ""
+            return compact_text(" ".join(cell.text for cell in table.rows[0].cells))
+
+        def contains(header: str, *tokens: str) -> bool:
+            return all(token in header for token in tokens)
+
+        def table_spec(table) -> dict | None:
+            header = table_header(table)
+            cols = len(table.columns)
+
+            if cols == 4 and contains(header, "基因", "突变位点", "潜在获益", "可能耐药"):
+                return {
+                    "name": "targeted_drug_tips",
+                    "widths": [1170, 1758, 3530, 1837],
+                    "header_size": 9.0,
+                    "body_size": 9.0,
+                    "link_cols": {0, 2, 3},
+                    "header_height": 567,
+                    "body_height": 692,
+                    "align": WD_ALIGN_PARAGRAPH.CENTER,
+                }
+
+            if cols == 3 and contains(header, "TMB/MSI/其它生物标志物检测结果", "用药提示"):
+                return {
+                    "name": "biomarkers",
+                    "widths": [1889, 3211, 3971],
+                    "header_size": 10.0,
+                    "body_size": 9.0,
+                    "link_cols": set(),
+                    "align": WD_ALIGN_PARAGRAPH.CENTER,
+                }
+
+            if cols == 4 and contains(header, "基因", "基因突变信息", "潜在获益", "可能耐药"):
+                return {
+                    "name": "compact_variant",
+                    "widths": [1100, 2600, 3000, 1600],
+                    "header_size": 8.0,
+                    "body_size": 7.4,
+                    "body_size_by_col": {0: 8.0},
+                    "bold_body_cols": {0},
+                    "link_cols": set(),
+                    "align": WD_ALIGN_PARAGRAPH.LEFT,
+                    "align_by_col": {0: WD_ALIGN_PARAGRAPH.CENTER},
+                }
+
+            if cols == 3 and contains(header, "药物名称", "相关基因", "药物适应情况"):
+                return {
+                    "name": "approved_drugs",
+                    "widths": [1806, 2539, 4383],
+                    "header_size": 12.0,
+                    "body_size": 10.5,
+                    "link_cols": set(),
+                    "align": WD_ALIGN_PARAGRAPH.CENTER,
+                    "align_by_col": {2: WD_ALIGN_PARAGRAPH.JUSTIFY},
+                }
+
+            if cols == 3 and contains(header, "检测基因", "检测内容", "检测结果"):
+                return {
+                    "name": "detected_genes",
+                    "widths": [1738, 2277, 4386],
+                    "header_size": 12.0,
+                    "body_size": 10.0,
+                    "link_cols": set(),
+                    "align": WD_ALIGN_PARAGRAPH.CENTER,
+                }
+
+            if cols == 3 and contains(header, "基因", "检测结果", "临床解读"):
+                return {
+                    "name": "immune_gene_interpretation",
+                    "header_size": 12.0,
+                    "body_size": 10.0,
+                    "link_cols": set(),
+                    "align": WD_ALIGN_PARAGRAPH.CENTER,
+                }
+
+            if cols == 6 and contains(header, "基因", "染色体", "起始位置", "终止位置", "状态", "拷贝数"):
+                return {
+                    "name": "cnv",
+                    "header_size": 10.0,
+                    "body_size": 9.0,
+                    "link_cols": set(),
+                    "align": WD_ALIGN_PARAGRAPH.CENTER,
+                }
+
+            if cols == 8 and contains(header, "基因1", "基因2", "染色体1", "断点1", "染色体2", "断点2"):
+                return {
+                    "name": "fusion",
+                    "header_size": 10.0,
+                    "body_size": 9.0,
+                    "link_cols": set(),
+                    "align": WD_ALIGN_PARAGRAPH.CENTER,
+                }
+
+            if cols == 3 and contains(header, "HLA位点", "Type1", "Type2"):
+                return {
+                    "name": "hla",
+                    "header_size": 10.0,
+                    "body_size": 9.0,
+                    "link_cols": set(),
+                    "align": WD_ALIGN_PARAGRAPH.CENTER,
+                }
+
+            return None
 
         def ensure(parent, tag: str):
             child = parent.find(qn(tag))
@@ -501,16 +601,17 @@ class TemplateRenderer:
                 border.set(qn("w:space"), "0")
                 border.set(qn("w:color"), color)
 
-        def set_table_layout(table) -> None:
+        def set_table_layout(table, widths: list[int] | None) -> None:
             table.alignment = WD_TABLE_ALIGNMENT.CENTER
             tbl_pr = table._tbl.tblPr
 
-            tbl_w = ensure(tbl_pr, "w:tblW")
-            tbl_w.set(qn("w:type"), "dxa")
-            tbl_w.set(qn("w:w"), str(sum(widths)))
-
             layout = ensure(tbl_pr, "w:tblLayout")
             layout.set(qn("w:type"), "fixed")
+
+            if widths:
+                tbl_w = ensure(tbl_pr, "w:tblW")
+                tbl_w.set(qn("w:type"), "dxa")
+                tbl_w.set(qn("w:w"), str(sum(widths)))
 
             cell_mar = ensure(tbl_pr, "w:tblCellMar")
             for side in ("top", "left", "bottom", "right"):
@@ -521,16 +622,17 @@ class TemplateRenderer:
                 margin.set(qn("w:w"), "70")
                 margin.set(qn("w:type"), "dxa")
 
-            grid = table._tbl.tblGrid
-            if grid is None:
-                grid = OxmlElement("w:tblGrid")
-                table._tbl.insert(0, grid)
-            for child in list(grid):
-                grid.remove(child)
-            for width in widths:
-                col = OxmlElement("w:gridCol")
-                col.set(qn("w:w"), str(width))
-                grid.append(col)
+            if widths:
+                grid = table._tbl.tblGrid
+                if grid is None:
+                    grid = OxmlElement("w:tblGrid")
+                    table._tbl.insert(0, grid)
+                for child in list(grid):
+                    grid.remove(child)
+                for width in widths:
+                    col = OxmlElement("w:gridCol")
+                    col.set(qn("w:w"), str(width))
+                    grid.append(col)
 
             set_table_border(table)
 
@@ -562,13 +664,35 @@ class TemplateRenderer:
             shd.set(qn("w:color"), "auto")
             shd.set(qn("w:fill"), fill)
 
-        def apply_font(run, *, header: bool, link: bool) -> None:
+        def cell_span(cell) -> int:
+            tc_pr = cell._tc.get_or_add_tcPr()
+            grid_span = tc_pr.find(qn("w:gridSpan"))
+            if grid_span is None:
+                return 1
+            try:
+                return max(1, int(grid_span.get(qn("w:val")) or "1"))
+            except ValueError:
+                return 1
+
+        def display_width(widths: list[int] | None, col_idx: int, span: int) -> int | None:
+            if not widths or col_idx >= len(widths):
+                return None
+            return sum(widths[col_idx : min(len(widths), col_idx + span)])
+
+        def apply_font(
+            run,
+            *,
+            header: bool,
+            link: bool,
+            size: float,
+            body_bold: bool = False,
+        ) -> None:
             run.font.name = "微软雅黑"
             run._element.get_or_add_rPr().get_or_add_rFonts().set(
                 qn("w:eastAsia"), "微软雅黑"
             )
-            run.font.size = Pt(9)
-            run.font.bold = bool(header)
+            run.font.size = Pt(size)
+            run.font.bold = bool(header or body_bold)
             run.font.underline = bool(link)
             if header:
                 run.font.color.rgb = RGBColor(255, 255, 255)
@@ -577,37 +701,81 @@ class TemplateRenderer:
             else:
                 run.font.color.rgb = RGBColor(0, 0, 0)
 
-        def style_cell(cell, *, header: bool, link: bool, width: int) -> None:
+        def style_cell(
+            cell,
+            *,
+            header: bool,
+            link: bool,
+            width: int | None,
+            size: float,
+            alignment,
+            body_bold: bool = False,
+        ) -> None:
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-            set_cell_width(cell, width)
+            if width is not None:
+                set_cell_width(cell, width)
             set_cell_border(cell)
             set_cell_shading(cell, "00C4D8" if header else "FFFFFF")
             for paragraph in cell.paragraphs:
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                paragraph.alignment = alignment
                 paragraph.paragraph_format.space_before = Pt(0)
                 paragraph.paragraph_format.space_after = Pt(0)
                 paragraph.paragraph_format.line_spacing = 1.0
                 for run in paragraph.runs:
-                    apply_font(run, header=header, link=link)
+                    apply_font(
+                        run,
+                        header=header,
+                        link=link,
+                        size=size,
+                        body_bold=body_bold,
+                    )
 
         for table in doc.tables:
-            if not is_target_table(table):
+            spec = table_spec(table)
+            if spec is None:
                 continue
-            set_table_layout(table)
+            widths = spec.get("widths")
+            set_table_layout(table, widths)
             for row_idx, row in enumerate(table.rows):
-                set_row_height(row, 567 if row_idx == 0 else 692)
-                for col_idx, cell in enumerate(row.cells[:4]):
+                if row_idx == 0 and spec.get("header_height"):
+                    set_row_height(row, spec["header_height"])
+                elif row_idx > 0 and spec.get("body_height"):
+                    set_row_height(row, spec["body_height"])
+                seen_cells = set()
+                for col_idx, cell in enumerate(row.cells):
+                    cell_key = id(cell._tc)
+                    if cell_key in seen_cells:
+                        continue
+                    seen_cells.add(cell_key)
+                    header = row_idx == 0
+                    span = cell_span(cell)
+                    width = display_width(widths, col_idx, span)
+                    if header:
+                        size = spec["header_size"]
+                        alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        body_bold = False
+                    else:
+                        size = spec.get("body_size_by_col", {}).get(
+                            col_idx, spec["body_size"]
+                        )
+                        alignment = spec.get("align_by_col", {}).get(
+                            col_idx, spec.get("align", WD_ALIGN_PARAGRAPH.CENTER)
+                        )
+                        body_bold = col_idx in spec.get("bold_body_cols", set())
                     style_cell(
                         cell,
-                        header=row_idx == 0,
-                        link=row_idx > 0 and col_idx in (0, 2, 3),
-                        width=widths[col_idx],
+                        header=header,
+                        link=not header and col_idx in spec.get("link_cols", set()),
+                        width=width,
+                        size=size,
+                        alignment=alignment,
+                        body_bold=body_bold,
                     )
             changed = True
 
         if changed:
             doc.save(file_path)
-            self.logger.debug("已规范靶向药物用药提示表样式")
+            self.logger.debug("已规范正文结果类表格样式")
 
     def validate_template_contract(self, template_path: str, context: dict) -> dict:
         """Validate that the template's referenced variables exist in the context.

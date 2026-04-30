@@ -446,6 +446,54 @@ def test_targeted_drug_tips_table_style_is_normalized(tmp_path):
     assert body_site_cell.paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
 
 
+def test_reviewed_result_table_style_expands_without_touching_qa_tables(tmp_path):
+    docx_path = tmp_path / "reviewed_result_tables.docx"
+    doc = Document()
+
+    biomarkers = doc.add_table(rows=2, cols=3)
+    for idx, value in enumerate(
+        ["TMB/MSI/其它生物标志物检测结果", "TMB/MSI/其它生物标志物检测结果", "用药提示"]
+    ):
+        biomarkers.rows[0].cells[idx].text = value
+    for idx, value in enumerate(["肿瘤突变负荷（TMB）", "18.8", "用药提示文本"]):
+        biomarkers.rows[1].cells[idx].text = value
+
+    drugs = doc.add_table(rows=2, cols=3)
+    for idx, value in enumerate(["药物名称", "相关基因", "药物适应情况"]):
+        drugs.rows[0].cells[idx].text = value
+    for idx, value in enumerate(["瑞戈非尼", "VEGFR", "适应情况文本"]):
+        drugs.rows[1].cells[idx].text = value
+
+    immune = doc.add_table(rows=2, cols=3)
+    for idx, value in enumerate(["基因", "检测结果", "临床解读"]):
+        immune.rows[0].cells[idx].text = value
+    for idx, value in enumerate(["MLH1", "未检出有害变异", "临床解读文本"]):
+        immune.rows[1].cells[idx].text = value
+
+    qa = doc.add_table(rows=2, cols=2)
+    qa.rows[0].cells[0].text = "问题1"
+    qa.rows[0].cells[1].text = "肿瘤患者为什么要进行基因检测？"
+    qa.rows[1].cells[0].text = ""
+    qa.rows[1].cells[1].text = "问答正文"
+    doc.save(docx_path)
+
+    TemplateRenderer(log_level="ERROR")._normalize_reviewed_result_tables(str(docx_path))
+
+    doc = Document(docx_path)
+    for idx in (0, 1, 2):
+        table = doc.tables[idx]
+        header_shd = table.rows[0].cells[0]._tc.tcPr.find(qn("w:shd"))
+        body_shd = table.rows[1].cells[0]._tc.tcPr.find(qn("w:shd"))
+        assert header_shd.get(qn("w:fill")) == "00C4D8"
+        assert body_shd.get(qn("w:fill")) == "FFFFFF"
+        assert table.rows[0].cells[0].paragraphs[0].runs[0].font.bold is True
+
+    qa_header_shd = doc.tables[3].rows[0].cells[0]._tc.tcPr.find(qn("w:shd"))
+    qa_body_shd = doc.tables[3].rows[1].cells[0]._tc.tcPr.find(qn("w:shd"))
+    assert qa_header_shd is None
+    assert qa_body_shd is None
+
+
 def test_signature_placeholder_is_removed_without_image(tmp_path):
     docx_path = tmp_path / "signature.docx"
     doc = Document()
