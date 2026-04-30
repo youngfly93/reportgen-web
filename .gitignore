@@ -61,3 +61,4 @@ backups/
 output/
 *.tgz
 *.tar.gz
+*.bak*
